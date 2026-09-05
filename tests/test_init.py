@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -124,17 +124,94 @@ async def test_config_flow_creates_entry(recorder_mock, hass: HomeAssistant, moc
     assert result["result"].unique_id == "42_000-0000001-001"
 
 
-async def test_options_flow_sets_price(recorder_mock, hass: HomeAssistant, mock_client) -> None:
-    """The options form renders and stores the price."""
+async def test_options_flow_sets_tariff(recorder_mock, hass: HomeAssistant, mock_client) -> None:
+    """The options form renders, validates, and stores the tariff."""
     from homeassistant.data_entry_flow import FlowResultType
 
-    entry = await _setup(hass)
+    from custom_components.aclara_ace.const import CONF_BILLING_PERIOD_DAYS, CONF_BILLING_START, CONF_TIERS
+
+    entry = await _setup(hass, options={CONF_PRICE_PER_UNIT: 0.005})  # legacy flat price
+    assert entry.runtime_data.tariff.is_flat
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.FORM
+
+    # Multiple tiers without a billing date is rejected.
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_PRICE_PER_UNIT: 0.0123}
+        result["flow_id"], {CONF_TIERS: "6000 0.003\n+ 0.005", CONF_BILLING_PERIOD_DAYS: 30}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_BILLING_START: "billing_start_required"}
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_TIERS: "garbage here now", CONF_BILLING_PERIOD_DAYS: 30}
+    )
+    assert result["errors"] == {CONF_TIERS: "invalid_tiers"}
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {CONF_TIERS: "6000 0.003\n+ 0.005", CONF_BILLING_START: "2026-03-15", CONF_BILLING_PERIOD_DAYS: 30},
     )
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options[CONF_PRICE_PER_UNIT] == pytest.approx(0.0123)
-    assert entry.runtime_data.price_per_unit == pytest.approx(0.0123)
+    tariff = entry.runtime_data.tariff
+    assert [t.upper for t in tariff.tiers] == [6000, None]
+    assert tariff.anchor == date(2026, 3, 15)
+    assert tariff.period_days == 30
+
+
+async def test_tiered_cost_resets_each_billing_period(
+    recorder_mock, hass: HomeAssistant, mock_client, portal: FakePortal
+) -> None:
+    """Cost uses cumulative-per-period tiers and starts over on the billing date."""
+    from custom_components.aclara_ace.const import CONF_BILLING_PERIOD_DAYS, CONF_BILLING_START, CONF_TIERS
+
+    # 150 gal/day. A 4-day period holds 600 gal: 250 @ $1, 250 @ $2, rest @ $4.
+    anchor = portal.oldest + timedelta(days=3)  # first period is short (3 days = 450 gal)
+    entry = await _setup(
+        hass,
+        options={
+            CONF_TIERS: "250 1\n500 2\n+ 4",
+            CONF_BILLING_START: anchor.isoformat(),
+            CONF_BILLING_PERIOD_DAYS: 4,
+        },
+    )
+    tariff = entry.runtime_data.tariff
+    readings = portal.readings(portal.oldest, portal.newest.date())
+
+    expected_total = 0.0
+    period, used = None, 0.0
+    for r in readings:
+        p = tariff.period_start(r.start)
+        if p != period:
+            period, used = p, 0.0
+        expected_total += tariff.cost(r.quantity, used)
+        used += r.quantity
+
+    cost = await _stats(hass, COST_ID)
+    assert cost[-1]["sum"] == pytest.approx(expected_total)
+
+    # Sanity-check the model by hand on the first two periods.
+    # Period 0 (3 days, 450 gal): 250*1 + 200*2 = 650. Period 1 (4 days, 600 gal): 250 + 500 + 100*4 = 1150.
+    by_period: dict[date, float] = {}
+    for row in cost:
+        d = datetime.fromtimestamp(row["start"], TZ)
+        by_period[tariff.period_start(d)] = by_period.get(tariff.period_start(d), 0.0) + row["state"]
+    periods = sorted(by_period)
+    assert by_period[periods[0]] == pytest.approx(650)
+    assert by_period[periods[1]] == pytest.approx(1150)
+
+    # Incremental refresh re-fetches from the period start so tier position is right.
+    portal.newest = portal.newest + timedelta(days=1)
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    assert portal.calls[-1][0] <= tariff.period_start(portal.newest.date() - timedelta(days=7))
+    cost2 = await _stats(hass, COST_ID)
+    readings2 = portal.readings(portal.oldest, portal.newest.date())
+    expected2, period, used = 0.0, None, 0.0
+    for r in readings2:
+        p = tariff.period_start(r.start)
+        if p != period:
+            period, used = p, 0.0
+        expected2 += tariff.cost(r.quantity, used)
+        used += r.quantity
+    assert cost2[-1]["sum"] == pytest.approx(expected2)

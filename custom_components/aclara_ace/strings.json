@@ -34,14 +34,23 @@
   "options": {
     "step": {
       "init": {
-        "title": "Water cost",
+        "title": "Water tariff",
+        "description": "Enter one tier per line as `<upper bound in gallons> <price per gallon>`. The last line uses `+` for no upper bound. Bounds are cumulative usage within a billing period and tiers reset at the start of every period.\n\nExample:\n```\n6000 0.00325\n15000 0.00475\n+ 0.0065\n```",
         "data": {
-          "price_per_unit": "Price per unit of water"
+          "tiers": "Rate tiers",
+          "billing_start_date": "Billing period start date",
+          "billing_period_days": "Billing period length"
         },
         "data_description": {
-          "price_per_unit": "Flat price per gallon (or whatever unit the portal reports) used for the cost statistic. Leave at 0 to skip cost tracking."
+          "tiers": "Leave empty to skip cost tracking. A single line like `+ 0.005` is a flat rate.",
+          "billing_start_date": "Any day a billing period started, e.g. the meter-read date on a bill. Periods repeat every N days from this date, forwards and backwards.",
+          "billing_period_days": "Days per billing period (usually 30)."
         }
       }
+    },
+    "error": {
+      "invalid_tiers": "Could not parse the tiers. Use `<upper> <price>` per line, `+` for the last tier.",
+      "billing_start_required": "A billing start date is needed for more than one tier."
     }
   },
   "entity": {

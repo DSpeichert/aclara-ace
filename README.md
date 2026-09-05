@@ -10,7 +10,7 @@ sensor would be permanently stale. Instead this integration imports historical
 statistics (the same approach Home Assistant's Opower integration uses):
 
 - `aclara_ace:water_<meter>_consumption` — hourly gallons, cumulative sum
-- `aclara_ace:water_<meter>_cost` — hourly cost from a flat price you configure
+- `aclara_ace:water_<meter>_cost` — hourly cost from your tiered tariff, tiers resetting each billing period
 
 It also creates one diagnostic sensor per meter, **Latest reading**, showing the
 newest hour the portal has published, with the statistic ids as attributes.
@@ -35,8 +35,32 @@ Copy `custom_components/aclara_ace` into `<config>/custom_components/` and resta
 3. On first refresh the integration backfills every hour the portal holds
    (since January 2026 for a meter installed then). Later refreshes run every
    6 hours and re-import the last 7 days so late or corrected reads are fixed up.
-4. Optional: ⋮ → **Configure** on the integration to set a flat price per gallon
-   for the cost statistic.
+4. Optional: ⋮ → **Configure** on the integration to enter your water tariff
+   (see below) so the cost statistic is populated.
+
+### Tariff and billing periods
+
+Most utilities bill in usage tiers that reset every billing cycle. In
+**Configure** enter one tier per line as `<upper bound> <price per gallon>`,
+with `+` on the last line for "everything above":
+
+```
+6000 0.00325
+15000 0.00475
++ 0.0065
+```
+
+Then set the **billing period start date** (any day a cycle started, e.g. the
+"read date" on a bill) and the **period length** (default 30 days). Cycles are
+laid out every N days from that date, forwards and backwards, and tier usage
+resets to zero at the start of each cycle. A single line like `+ 0.005` is a
+flat rate and needs no billing date.
+
+Changing the tariff only affects hours imported from then on (the last 7 days
+are always re-imported, so recent history picks up the new rates). To re-price
+all history, delete both `aclara_ace:water_<meter>_consumption` and
+`aclara_ace:water_<meter>_cost` in Developer tools → Statistics; the next
+refresh then backfills everything from scratch with the current tariff.
 
 ### Energy dashboard
 

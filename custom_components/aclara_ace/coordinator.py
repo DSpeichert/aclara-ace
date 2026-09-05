@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 import logging
@@ -40,14 +41,19 @@ from .api import (
     Reading,
 )
 from .const import (
+    CONF_BILLING_PERIOD_DAYS,
+    CONF_BILLING_START,
     CONF_CLIENT_ID,
     CONF_PRICE_PER_UNIT,
+    CONF_TIERS,
     DEFAULT_BACKFILL_DAYS,
+    DEFAULT_BILLING_PERIOD_DAYS,
     DEFAULT_PRICE_PER_UNIT,
     DOMAIN,
     LOOKBACK_DAYS,
     UPDATE_INTERVAL,
 )
+from .tariff import Tariff, TariffError, Tier, parse_tiers
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -110,11 +116,15 @@ class AclaraAceCoordinator(DataUpdateCoordinator[dict[str, MeterData]]):
         self.async_add_listener(_dummy_listener)
 
     @property
+    def tariff(self) -> Tariff:
+        """Tiered tariff from the options flow (falls back to the legacy flat price)."""
+        return tariff_from_options(self.config_entry.options)
+
+    @property
     def price_per_unit(self) -> float:
-        """Flat price per volume unit from the options flow."""
-        return float(
-            self.config_entry.options.get(CONF_PRICE_PER_UNIT, DEFAULT_PRICE_PER_UNIT)
-        )
+        """Price of the first tier, for display."""
+        tariff = self.tariff
+        return tariff.tiers[0].price if tariff.tiers else 0.0
 
     async def _async_update_data(self) -> dict[str, MeterData]:
         """Log in, pull new readings and insert statistics."""
@@ -169,6 +179,12 @@ class AclaraAceCoordinator(DataUpdateCoordinator[dict[str, MeterData]]):
             last_start = dt_util.utc_from_timestamp(last_stat[consumption_id][0]["start"])
             start_date = (last_start.astimezone(tz) - timedelta(days=LOOKBACK_DAYS)).date()
 
+        tariff = self.tariff
+        if last_stat and tariff.enabled and not tariff.is_flat:
+            # Tier position depends on everything used earlier in the billing
+            # period, so start the fetch at that period's first day.
+            start_date = min(start_date, tariff.period_start(start_date))
+
         readings = await self.api.async_get_hourly_usage(meter, start_date, today, timezone=tz)
         unit_raw = readings[0].unit if readings else (span.unit if span else "gal")
         unit = _UNIT_MAP.get(unit_raw.lower(), unit_raw)
@@ -201,12 +217,17 @@ class AclaraAceCoordinator(DataUpdateCoordinator[dict[str, MeterData]]):
             consumption_sum, cost_sum = await self._async_base_sums(
                 consumption_id, cost_id, first_start
             )
-            price = self.price_per_unit
             consumption_stats: list[StatisticData] = []
             cost_stats: list[StatisticData] = []
+            period_start: date | None = None
+            period_used = 0.0
             for reading in readings:
                 consumption_sum += reading.quantity
-                cost = reading.quantity * price
+                this_period = tariff.period_start(reading.start)
+                if this_period != period_start:
+                    period_start, period_used = this_period, 0.0
+                cost = tariff.cost(reading.quantity, period_used)
+                period_used += reading.quantity
                 cost_sum += cost
                 consumption_stats.append(
                     StatisticData(start=reading.start, state=reading.quantity, sum=consumption_sum)
@@ -269,6 +290,27 @@ class AclaraAceCoordinator(DataUpdateCoordinator[dict[str, MeterData]]):
             return 0.0
 
         return _last_sum(stats.get(consumption_id, [])), _last_sum(stats.get(cost_id, []))
+
+
+def tariff_from_options(options: Mapping[str, Any]) -> Tariff:
+    """Build the tariff from config entry options."""
+    tiers: tuple[Tier, ...] = ()
+    text = options.get(CONF_TIERS) or ""
+    if text.strip():
+        try:
+            tiers = parse_tiers(text)
+        except TariffError as err:
+            _LOGGER.error("Ignoring invalid tariff tiers in options: %s", err)
+    elif (flat := float(options.get(CONF_PRICE_PER_UNIT, DEFAULT_PRICE_PER_UNIT))) > 0:
+        tiers = (Tier(None, flat),)
+    anchor: date | None = None
+    if raw := options.get(CONF_BILLING_START):
+        try:
+            anchor = date.fromisoformat(str(raw))
+        except ValueError:
+            _LOGGER.error("Ignoring invalid billing start date in options: %r", raw)
+    period_days = int(options.get(CONF_BILLING_PERIOD_DAYS, DEFAULT_BILLING_PERIOD_DAYS) or DEFAULT_BILLING_PERIOD_DAYS)
+    return Tariff(tiers=tiers, anchor=anchor, period_days=max(1, period_days))
 
 
 def _pick_span(spans: list[MeterSpan], meter_id: str) -> MeterSpan | None:

@@ -18,6 +18,7 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.selector import (
+    DateSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -27,7 +28,17 @@ from homeassistant.helpers.selector import (
 )
 
 from .api import AclaraAceClient, AclaraAceError, AuthError
-from .const import CONF_CLIENT_ID, CONF_PRICE_PER_UNIT, DEFAULT_PRICE_PER_UNIT, DOMAIN
+from .const import (
+    CONF_BILLING_PERIOD_DAYS,
+    CONF_BILLING_START,
+    CONF_CLIENT_ID,
+    CONF_PRICE_PER_UNIT,
+    CONF_TIERS,
+    DEFAULT_BILLING_PERIOD_DAYS,
+    DEFAULT_PRICE_PER_UNIT,
+    DOMAIN,
+)
+from .tariff import TariffError, Tier, format_tiers, parse_tiers
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -146,20 +157,50 @@ class AclaraAceConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class AclaraAceOptionsFlow(OptionsFlowWithReload):
-    """Options: flat price per unit for the cost statistic."""
+    """Options: tiered tariff and billing cycle for the cost statistic."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Show/handle the options form."""
+        errors: dict[str, str] = {}
+        options = self.config_entry.options
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
-        current = self.config_entry.options.get(CONF_PRICE_PER_UNIT, DEFAULT_PRICE_PER_UNIT)
+            text = user_input.get(CONF_TIERS, "")
+            try:
+                tiers = parse_tiers(text)
+            except TariffError:
+                errors[CONF_TIERS] = "invalid_tiers"
+            else:
+                if len(tiers) > 1 and not user_input.get(CONF_BILLING_START):
+                    errors[CONF_BILLING_START] = "billing_start_required"
+            if not errors:
+                data = {
+                    CONF_TIERS: format_tiers(tiers),
+                    CONF_BILLING_START: user_input.get(CONF_BILLING_START) or "",
+                    CONF_BILLING_PERIOD_DAYS: int(user_input[CONF_BILLING_PERIOD_DAYS]),
+                }
+                return self.async_create_entry(data=data)
+
+        current_tiers = options.get(CONF_TIERS)
+        if current_tiers is None and (flat := options.get(CONF_PRICE_PER_UNIT, DEFAULT_PRICE_PER_UNIT)):
+            current_tiers = format_tiers((Tier(None, float(flat)),))
+        suggested = {
+            CONF_TIERS: current_tiers or "",
+            CONF_BILLING_START: options.get(CONF_BILLING_START) or None,
+            CONF_BILLING_PERIOD_DAYS: options.get(CONF_BILLING_PERIOD_DAYS, DEFAULT_BILLING_PERIOD_DAYS),
+        }
         schema = vol.Schema(
             {
-                vol.Required(CONF_PRICE_PER_UNIT, default=current): NumberSelector(
-                    NumberSelectorConfig(min=0, step="any", mode=NumberSelectorMode.BOX)
-                )
+                vol.Optional(CONF_TIERS): TextSelector(TextSelectorConfig(multiline=True)),
+                vol.Optional(CONF_BILLING_START): DateSelector(),
+                vol.Required(CONF_BILLING_PERIOD_DAYS): NumberSelector(
+                    NumberSelectorConfig(min=1, max=366, step=1, mode=NumberSelectorMode.BOX, unit_of_measurement="days")
+                ),
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(schema, user_input or suggested),
+            errors=errors,
+        )

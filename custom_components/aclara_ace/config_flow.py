@@ -158,7 +158,7 @@ class AclaraAceOptionsFlow(OptionsFlowWithReload):
         schema = vol.Schema(
             {
                 vol.Required(CONF_PRICE_PER_UNIT, default=current): NumberSelector(
-                    NumberSelectorConfig(min=0, step=0.0001, mode=NumberSelectorMode.BOX)
+                    NumberSelectorConfig(min=0, step="any", mode=NumberSelectorMode.BOX)
                 )
             }
         )

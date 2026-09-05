@@ -122,3 +122,19 @@ async def test_config_flow_creates_entry(recorder_mock, hass: HomeAssistant, moc
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "ACE 000-0000001-001"
     assert result["result"].unique_id == "42_000-0000001-001"
+
+
+async def test_options_flow_sets_price(recorder_mock, hass: HomeAssistant, mock_client) -> None:
+    """The options form renders and stores the price."""
+    from homeassistant.data_entry_flow import FlowResultType
+
+    entry = await _setup(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {CONF_PRICE_PER_UNIT: 0.0123}
+    )
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_PRICE_PER_UNIT] == pytest.approx(0.0123)
+    assert entry.runtime_data.price_per_unit == pytest.approx(0.0123)

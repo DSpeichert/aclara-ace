@@ -1,0 +1,13 @@
+{
+  "domain": "aclara_ace",
+  "name": "Aclara ACE Water Portal",
+  "codeowners": ["@dspeichert"],
+  "config_flow": true,
+  "dependencies": ["recorder"],
+  "documentation": "https://github.com/dspeichert/aclara-ace",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/dspeichert/aclara-ace/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

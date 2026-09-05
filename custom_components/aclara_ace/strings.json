@@ -1,0 +1,54 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Aclara ACE water portal",
+        "description": "Sign in with the same email and password you use on the utility's usage portal (acewebsite.silverblaze.com).",
+        "data": {
+          "username": "Email",
+          "password": "Password",
+          "client_id": "Portal client ID"
+        },
+        "data_description": {
+          "client_id": "Your utility's numeric identifier, found in the portal's login URL (`acewebsite.silverblaze.com/B2C?clientId=NNN`)."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate with the ACE portal",
+        "description": "The portal rejected the stored password for {username}. Enter the current password.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the portal",
+      "invalid_auth": "Invalid email or password",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This account is already configured",
+      "reauth_successful": "Re-authentication was successful"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Water cost",
+        "data": {
+          "price_per_unit": "Price per unit of water"
+        },
+        "data_description": {
+          "price_per_unit": "Flat price per gallon (or whatever unit the portal reports) used for the cost statistic. Leave at 0 to skip cost tracking."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "latest_reading": {
+        "name": "Latest reading"
+      }
+    }
+  }
+}

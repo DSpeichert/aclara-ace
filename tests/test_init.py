@@ -215,3 +215,32 @@ async def test_tiered_cost_resets_each_billing_period(
         expected2 += tariff.cost(r.quantity, used)
         used += r.quantity
     assert cost2[-1]["sum"] == pytest.approx(expected2)
+
+
+async def test_rebuild_button_reprices_history(
+    recorder_mock, hass: HomeAssistant, mock_client, portal: FakePortal
+) -> None:
+    """Pressing the button re-imports everything with the tariff set since."""
+    from custom_components.aclara_ace.const import CONF_TIERS
+
+    entry = await _setup(hass)  # no tariff: cost stays 0
+    cost = await _stats(hass, COST_ID)
+    assert cost[-1]["sum"] == 0
+
+    # The coordinator reads options live, so no reload is needed for the test.
+    hass.config_entries.async_update_entry(entry, options={CONF_TIERS: "+ 0.01"})
+    await hass.async_block_till_done()
+
+    button = "button.water_meter_12345678_rebuild_statistics"
+    assert hass.states.get(button) is not None
+    calls_before = len(portal.calls)
+    await hass.services.async_call("button", "press", {"entity_id": button}, blocking=True)
+    await hass.async_block_till_done()
+
+    assert len(portal.calls) == calls_before + 1
+    assert portal.calls[-1][0] == portal.oldest  # full history, not the lookback window
+    usage = await _stats(hass, STAT_ID)
+    cost = await _stats(hass, COST_ID)
+    assert len(cost) == len(usage)
+    assert cost[-1]["sum"] == pytest.approx(usage[-1]["sum"] * 0.01)
+    assert usage[-1]["sum"] == pytest.approx(sum(r.quantity for r in portal.readings(portal.oldest, portal.newest.date())))

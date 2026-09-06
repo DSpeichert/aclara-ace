@@ -58,9 +58,9 @@ flat rate and needs no billing date.
 
 Changing the tariff only affects hours imported from then on (the last 7 days
 are always re-imported, so recent history picks up the new rates). To re-price
-all history, delete both `aclara_ace:water_<meter>_consumption` and
-`aclara_ace:water_<meter>_cost` in Developer tools → Statistics; the next
-refresh then backfills everything from scratch with the current tariff.
+all history, press the **Rebuild statistics** button on the meter's device
+page: it re-downloads every reading and rewrites both statistics with the
+current tariff. It takes about half a minute.
 
 ### Energy dashboard
 

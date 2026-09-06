@@ -58,6 +58,11 @@
       "latest_reading": {
         "name": "Latest reading"
       }
+    },
+    "button": {
+      "rebuild_statistics": {
+        "name": "Rebuild statistics"
+      }
     }
   }
 }

@@ -114,6 +114,18 @@ class AclaraAceCoordinator(DataUpdateCoordinator[dict[str, MeterData]]):
 
         # Keep periodic refreshes running even if no entity subscribes.
         self.async_add_listener(_dummy_listener)
+        # Meters whose statistics must be rebuilt from the oldest reading.
+        self._rebuild: set[str] = set()
+
+    async def async_rebuild_statistics(self, meter_id: str) -> None:
+        """Re-import every reading for ``meter_id`` and re-price it with the current tariff.
+
+        Existing statistic rows are overwritten in place (same start times),
+        so both the consumption and cost sums are recomputed from zero.
+        """
+        self._rebuild.add(meter_id)
+        _LOGGER.info("Rebuilding statistics for meter %s from the oldest reading", meter_id)
+        await self.async_refresh()
 
     @property
     def tariff(self) -> Tariff:
@@ -166,15 +178,18 @@ class AclaraAceCoordinator(DataUpdateCoordinator[dict[str, MeterData]]):
         name_prefix = f"ACE {meter.commodity} {meter.meter_id}"
 
         today = dt_util.now(tz).date()
-        last_stat = await get_instance(self.hass).async_add_executor_job(
-            get_last_statistics, self.hass, 1, consumption_id, True, set()
-        )
+        rebuild = meter.meter_id in self._rebuild
+        last_stat = None
+        if not rebuild:
+            last_stat = await get_instance(self.hass).async_add_executor_job(
+                get_last_statistics, self.hass, 1, consumption_id, True, set()
+            )
         if not last_stat:
             if span is not None:
                 start_date = span.oldest.astimezone(tz).date()
             else:
                 start_date = today - timedelta(days=DEFAULT_BACKFILL_DAYS)
-            _LOGGER.debug("%s: first import, backfilling from %s", consumption_id, start_date)
+            _LOGGER.debug("%s: %s from %s", consumption_id, "rebuilding" if rebuild else "first import, backfilling", start_date)
         else:
             last_start = dt_util.utc_from_timestamp(last_stat[consumption_id][0]["start"])
             start_date = (last_start.astimezone(tz) - timedelta(days=LOOKBACK_DAYS)).date()
@@ -242,6 +257,7 @@ class AclaraAceCoordinator(DataUpdateCoordinator[dict[str, MeterData]]):
                 readings[0].start,
                 readings[-1].start,
             )
+            self._rebuild.discard(meter.meter_id)
             latest_reading = readings[-1].start
             latest_day = latest_reading.date()
             latest_day_total = sum(r.quantity for r in readings if r.start.date() == latest_day)

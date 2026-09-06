@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 
 from .coordinator import AclaraAceConfigEntry, AclaraAceCoordinator
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.BUTTON, Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AclaraAceConfigEntry) -> bool:

@@ -220,7 +220,7 @@ class AclaraAceCoordinator(DataUpdateCoordinator[dict[str, MeterData]]):
             source=DOMAIN,
             statistic_id=cost_id,
             unit_class=None,
-            unit_of_measurement=None,
+            unit_of_measurement=self.hass.config.currency,
         )
 
         latest_reading: datetime | None = None
